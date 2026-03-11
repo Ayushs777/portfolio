@@ -6,6 +6,7 @@ import { getContent } from '@/app/actions';
 import CustomCursor from '@/components/CustomCursor';
 import HologramOverlay from '@/components/HologramOverlay';
 import SystemStatusHUD from '@/components/SystemStatusHUD';
+import AIChatBot from '@/components/AIChatBot';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 
@@ -29,6 +30,7 @@ export default function RootLayout({
         <HologramOverlay />
         <SystemStatusHUD />
         {children}
+        <AIChatBot />
       </body>
     </html>
   );
