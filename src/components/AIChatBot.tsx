@@ -18,103 +18,118 @@ interface Message {
 
 export default function AIChatBot() {
     const [isOpen, setIsOpen] = useState(false);
-    const [messages, setMessages] = useState<Message[]>([]);
-    const [input, setInput] = useState('');
-    const [isLoading, setIsLoading] = useState(false);
-    const scrollRef = useRef<HTMLDivElement>(null);
+    const [mounted, setMounted] = useState(false);
+    const [messages, setMessages] = useState<Message[]>([
+        {
+            id: '1',
+            role: 'assistant',
+            content: "Hello! I'm Ayush's Assistant. How can I help you today?",
+        },
+    ]);
 
     useEffect(() => {
-        if (scrollRef.current) {
-            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        setMounted(true);
+    }, []);
+
+    const [input, setInput] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const messagesEndRef = useRef<HTMLDivElement>(null);
+
+    const scrollToBottom = () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    };
+
+    useEffect(() => {
+        if (isOpen) {
+            scrollToBottom();
         }
-    }, [messages]);
+    }, [messages, isOpen]);
 
-    const handleSubmit = useCallback(async (e: FormEvent) => {
-        e.preventDefault();
-        const trimmed = input.trim();
-        if (!trimmed || isLoading) return;
+    const handleSubmit = useCallback(
+        async (e: FormEvent) => {
+            e.preventDefault();
+            if (!input.trim() || isLoading) return;
 
-        const userMessage: Message = {
-            id: Date.now().toString(),
-            role: 'user',
-            content: trimmed,
-        };
+            const userMessage: Message = {
+                id: Date.now().toString(),
+                role: 'user',
+                content: input,
+            };
 
-        const updatedMessages = [...messages, userMessage];
-        setMessages(updatedMessages);
-        setInput('');
-        setIsLoading(true);
+            setMessages((prev) => [...prev, userMessage]);
+            setInput('');
+            setIsLoading(true);
 
-        const assistantId = (Date.now() + 1).toString();
+            const assistantId = (Date.now() + 1).toString();
+            const decoder = new TextEncoder();
 
-        try {
-            const res = await fetch('/api/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    messages: updatedMessages.map((m) => ({
-                        role: m.role,
-                        content: m.content,
-                    })),
-                }),
-            });
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        messages: [...messages, userMessage].map((m) => ({
+                            role: m.role,
+                            content: m.content,
+                        })),
+                    }),
+                });
 
-            if (!res.ok) {
-                throw new Error('Failed to fetch response');
-            }
+                if (!response.ok) throw new Error('API request failed');
 
-            const reader = res.body?.getReader();
-            const decoder = new TextDecoder();
+                const reader = response.body?.getReader();
+                if (!reader) throw new Error('No reader available');
 
-            if (!reader) {
-                throw new Error('No reader available');
-            }
+                // Add empty assistant message that we'll stream into
+                setMessages((prev) => [
+                    ...prev,
+                    { id: assistantId, role: 'assistant', content: '' },
+                ]);
 
-            // Add empty assistant message that we'll stream into
-            setMessages((prev) => [
-                ...prev,
-                { id: assistantId, role: 'assistant', content: '' },
-            ]);
-
-            let done = false;
-            while (!done) {
-                const { value, done: readerDone } = await reader.read();
-                done = readerDone;
-                if (value) {
-                    const chunk = decoder.decode(value, { stream: true });
-                    // Parse Vercel AI SDK data stream format: lines like 0:"text"\n
-                    const lines = chunk.split('\n').filter(Boolean);
-                    for (const line of lines) {
-                        if (line.startsWith('0:')) {
-                            try {
-                                const text = JSON.parse(line.slice(2));
-                                setMessages((prev) =>
-                                    prev.map((m) =>
-                                        m.id === assistantId
-                                            ? { ...m, content: m.content + text }
-                                            : m
-                                    )
-                                );
-                            } catch {
-                                // skip non-parseable lines
+                let done = false;
+                const textDecoder = new TextDecoder();
+                while (!done) {
+                    const { value, done: readerDone } = await reader.read();
+                    done = readerDone;
+                    if (value) {
+                        const chunk = textDecoder.decode(value, { stream: true });
+                        // Parse Vercel AI SDK data stream format: lines like 0:"text"\n
+                        const lines = chunk.split('\n').filter(Boolean);
+                        for (const line of lines) {
+                            if (line.startsWith('0:')) {
+                                try {
+                                    const text = JSON.parse(line.slice(2));
+                                    setMessages((prev) =>
+                                        prev.map((m) =>
+                                            m.id === assistantId
+                                                ? { ...m, content: m.content + text }
+                                                : m
+                                        )
+                                    );
+                                } catch {
+                                    // skip non-parseable lines
+                                }
                             }
                         }
                     }
                 }
+            } catch {
+                setMessages((prev) => [
+                    ...prev,
+                    {
+                        id: assistantId,
+                        role: 'assistant',
+                        content: 'Sorry, something went wrong. Please try again later.',
+                    },
+                ]);
+            } finally {
+                setIsLoading(false);
             }
-        } catch {
-            setMessages((prev) => [
-                ...prev,
-                {
-                    id: assistantId,
-                    role: 'assistant',
-                    content: 'Sorry, something went wrong. Please try again later.',
-                },
-            ]);
-        } finally {
-            setIsLoading(false);
-        }
-    }, [input, isLoading, messages]);
+        },
+        [input, isLoading, messages]
+    );
+
+    if (!mounted) return null;
 
     return (
         <div className="fixed bottom-6 left-6 z-50">
@@ -150,7 +165,6 @@ export default function AIChatBot() {
 
                         {/* Messages */}
                         <div
-                            ref={scrollRef}
                             className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin scrollbar-thumb-[#bc13fe]/30"
                         >
                             {messages.length === 0 && (
@@ -189,20 +203,21 @@ export default function AIChatBot() {
                                     </div>
                                 </div>
                             ))}
-                            {isLoading && messages[messages.length - 1]?.role !== 'assistant' && (
+                            {isLoading && (
                                 <div className="flex items-start gap-2">
-                                    <div className="w-8 h-8 rounded-full bg-[#bc13fe]/10 border border-[#bc13fe]/30 flex items-center justify-center shrink-0">
+                                    <div className="w-8 h-8 rounded-full bg-[#bc13fe]/10 flex items-center justify-center shrink-0 border border-[#bc13fe]/30">
                                         <Bot size={14} className="text-[#bc13fe]" />
                                     </div>
                                     <div className="bg-[#bc13fe]/10 p-3 rounded-2xl rounded-tl-none border border-[#bc13fe]/20">
                                         <div className="flex gap-1">
-                                            <span className="w-1.5 h-1.5 bg-[#bc13fe] rounded-full animate-bounce"></span>
-                                            <span className="w-1.5 h-1.5 bg-[#bc13fe] rounded-full animate-bounce [animation-delay:0.2s]"></span>
-                                            <span className="w-1.5 h-1.5 bg-[#bc13fe] rounded-full animate-bounce [animation-delay:0.4s]"></span>
+                                            <span className="w-1.5 h-1.5 bg-[#bc13fe] rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                            <span className="w-1.5 h-1.5 bg-[#bc13fe] rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                            <span className="w-1.5 h-1.5 bg-[#bc13fe] rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                                         </div>
                                     </div>
                                 </div>
                             )}
+                            <div ref={messagesEndRef} />
                         </div>
 
                         {/* Input */}
